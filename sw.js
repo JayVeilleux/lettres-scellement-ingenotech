@@ -5,8 +5,8 @@
 // a une connexion, et on ne se rabat sur la copie locale que hors ligne, pour
 // ne jamais rester bloque sur une version perimee apres une mise a jour.
 
-var CACHE = 'lettres-scellement-shell-v1';
-var SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './jszip.min.js'];
+var CACHE = 'lettres-scellement-shell-v2';
+var SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './jszip.min.js', './html2canvas.min.js', './jspdf.umd.min.js'];
 
 self.addEventListener('install', function (e) {
   self.skipWaiting();

@@ -11,6 +11,8 @@
 <meta name="theme-color" content="#0E86D4">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <script src="./jszip.min.js"></script>
+<script src="./html2canvas.min.js"></script>
+<script src="./jspdf.umd.min.js"></script>
 <style>
   :root{
     --accent:#0E86D4;
@@ -385,7 +387,8 @@
           <h2>Générer</h2>
           <button class="btn btn-primary" id="btn-generate">Générer la lettre (Word)</button>
           <button class="btn btn-secondary" id="btn-preview">Aperçu de la lettre</button>
-          <button class="btn btn-secondary" id="btn-print">Imprimer / Enregistrer en PDF</button>
+          <button class="btn btn-secondary" id="btn-save-pdf">Enregistrer en PDF</button>
+          <button class="btn btn-secondary" id="btn-print">Imprimer</button>
           <div class="status-msg" id="status-msg"></div>
           <div style="margin-top:16px;">
             <div class="meta-line"><span>Signataire</span><b>Marc Raby, T.P.</b></div>
@@ -400,6 +403,8 @@
       </div>
     </div>
   </div>
+
+  <div class="letter-sheet" id="pdf-sheet" aria-hidden="true" style="position:fixed; left:-10000px; top:0; width:794px; margin:0;"></div>
 
   <div id="panel-historique" class="hidden">
     <div class="card">
@@ -605,11 +610,12 @@
 
   // ---------- preview ----------
 
-  function letterBodyHtml(scenario, f, c){
-    var lotPh = '<span class="ph">' + escapeHtml(c.LOT||"…") + '</span>';
-    var entPh = '<span class="ph">' + escapeHtml(c.ENTREPRISE||"…") + '</span>';
-    var villeEntPh = '<span class="ph">' + escapeHtml(c.VILLE_ENTREPRISE||"…") + '</span>';
-    var dateScelPh = '<span class="ph">' + escapeHtml(c.DATE_SCELLEMENT||"…") + '</span>';
+  function letterBodyHtml(scenario, f, c, plain){
+    var wrap = function(v){ return plain ? escapeHtml(v||"") : '<span class="ph">' + escapeHtml(v||"…") + '</span>'; };
+    var lotPh = wrap(c.LOT);
+    var entPh = wrap(c.ENTREPRISE);
+    var villeEntPh = wrap(c.VILLE_ENTREPRISE);
+    var dateScelPh = wrap(c.DATE_SCELLEMENT);
 
     var html = "";
     if(scenario === "distance"){
@@ -633,15 +639,13 @@
     html += "<li>L’espace annulaire a été rempli, selon les règles de l’art, sur une profondeur minimale de 5 m au moyen de bentonite de manière à assurer un scellement étanche et durable;</li>";
     html += "<li>Le tubage extérieur a été retiré sans porter atteinte à l’intégrité du scellement.</li>";
     html += "</ul>";
-    var salPh = '<span class="ph">' + escapeHtml(c.SALUTATION||"…") + '</span>';
+    var salPh = wrap(c.SALUTATION);
     html += "<p>Nous espérons le tout à votre satisfaction et veuillez recevoir, " + salPh + " nos salutations les plus distinguées.</p>";
     return html;
   }
 
-  function renderPreview(){
-    var f = readForm();
-    var c = computeFields(f);
-    var ph = function(v){ return '<span class="ph">' + escapeHtml(v||"…") + '</span>'; };
+  function buildLetterHtml(f, c, plain){
+    var ph = function(v){ return plain ? escapeHtml(v||"") : '<span class="ph">' + escapeHtml(v||"…") + '</span>'; };
 
     var objTitle = "Attestation de conformité des travaux de scellement d’un ouvrage de prélèvement d’eau souterraine";
 
@@ -653,10 +657,15 @@
     html += '<br>' + ph(c.ADRESSE) + '<br>' + ph(c.VILLE_CP) + '</div>';
     html += '<div class="obj"><b>Objet : </b><u>' + objTitle + '</u><br>Lot : ' + ph(c.LOT) + ', ' + ph(c.ADRESSE_TRAVAUX) + ', ' + ph(c.VILLE_TRAVAUX) + ' (Qc)<br>N/réf. : ' + ph(c.NREF) + '</div>';
     html += '<p>' + ph(c.SALUTATION) + '</p>';
-    html += letterBodyHtml(f.scenario, f, c);
+    html += letterBodyHtml(f.scenario, f, c, plain);
     html += '<div class="sig"><img src="' + SIGNATURE_DATA_URI + '" alt=""><div class="name">Marc Raby, T.P.</div><div class="memb">Membre OTPQ : 2821</div></div>';
+    return html;
+  }
 
-    el("preview-content").innerHTML = html;
+  function renderPreview(){
+    var f = readForm();
+    var c = computeFields(f);
+    el("preview-content").innerHTML = buildLetterHtml(f, c, false);
   }
 
   // ---------- UI wiring ----------
@@ -710,6 +719,51 @@
     } finally {
       btn.disabled = false;
       btn.textContent = "Générer la lettre (Word)";
+    }
+  }
+
+  async function savePdf(){
+    var f = readForm();
+    clearStatus();
+    var c = computeFields(f);
+    c._dest2On = f.dest2;
+
+    var btn = el("btn-save-pdf");
+    btn.disabled = true;
+    var origText = btn.textContent;
+    btn.textContent = "Génération…";
+    try{
+      var sheet = el("pdf-sheet");
+      sheet.innerHTML = buildLetterHtml(f, c, true);
+      // largeur fixe = ~210mm (A4) a 96dpi, pour que la mise en page corresponde
+      // a une vraie page imprimee plutot qu'au panneau d'apercu etroit de l'ecran.
+      var canvas = await html2canvas(sheet, {scale:1.5, backgroundColor:"#ffffff", useCORS:true, width:794, windowWidth:794});
+      var imgData = canvas.toDataURL("image/jpeg", 0.92);
+      var JsPdfCtor = window.jspdf.jsPDF;
+      var pdf = new JsPdfCtor({unit:"mm", format:"a4", compress:true});
+      var pageWidth = 210, pageHeight = 297;
+      var imgWidth = pageWidth;
+      var imgHeight = canvas.height * imgWidth / canvas.width;
+      var heightLeft = imgHeight;
+      var position = 0;
+      pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+      while(heightLeft > 0){
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+      var blob = pdf.output("blob");
+      var fname = "Lettre scellement - " + sanitizeFilenamePart(f.nom1) + " - " + sanitizeFilenamePart(f.nref || f.lot) + ".pdf";
+      saveBlobAsFile(blob, fname);
+      showStatus("ok", "PDF enregistré : " + fname);
+    } catch(err){
+      showStatus("error", "Erreur lors de la génération du PDF. Réessayez, ou utilisez Imprimer.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+      sheet.innerHTML = "";
     }
   }
 
@@ -878,6 +932,7 @@
       el("preview-panel").classList.toggle("hidden");
       renderPreview();
     });
+    el("btn-save-pdf").addEventListener("click", savePdf);
     el("btn-print").addEventListener("click", function(){
       el("preview-panel").classList.remove("hidden");
       renderPreview();
