@@ -156,6 +156,32 @@
   .scenario-card .d{ font-size:.78rem; color:var(--ink-soft); margin-top:2px; line-height:1.4; }
   .scenario-card.selected{ border-color:var(--accent); background:var(--accent-tint); }
 
+  .date-picker-wrap{ position:relative; }
+  .date-picker-wrap input[readonly]{ cursor:pointer; }
+  .date-picker-popup{
+    position:absolute; left:0; bottom:calc(100% + 6px); z-index:30;
+    width:266px; background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    box-shadow:var(--shadow); padding:12px;
+  }
+  .date-picker-popup.hidden{ display:none; }
+  .dp-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .dp-header span{ font-size:.86rem; font-weight:600; text-transform:capitalize; }
+  .dp-nav{
+    appearance:none; border:1px solid var(--line); background:var(--surface-3); color:var(--ink);
+    border-radius:7px; width:26px; height:26px; font-size:.95rem; cursor:pointer; line-height:1;
+  }
+  .dp-nav:hover{ background:var(--surface-2); }
+  .dp-dow{ display:grid; grid-template-columns:repeat(7,1fr); text-align:center; font-size:.68rem; color:var(--ink-soft); margin-bottom:4px; }
+  .dp-grid{ display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }
+  .dp-day{
+    appearance:none; border:0; background:transparent; color:var(--ink); font-family:inherit;
+    font-size:.8rem; padding:6px 0; border-radius:7px; cursor:pointer;
+  }
+  .dp-day:hover{ background:var(--surface-2); }
+  .dp-day.muted{ color:var(--ink-soft); opacity:.5; }
+  .dp-day.today{ font-weight:700; }
+  .dp-day.selected{ background:var(--accent); color:#fff; }
+
   .toggle-row{ display:flex; align-items:center; gap:9px; margin:2px 0 12px; }
   .toggle-row input{ accent-color:var(--accent); width:16px; height:16px; }
   .toggle-row label{ font-size:.85rem; font-weight:500; }
@@ -374,8 +400,22 @@
           </div>
           <div class="row">
             <div class="field">
-              <label for="f-date-scellement">Date des travaux de scellement</label>
-              <input type="date" id="f-date-scellement">
+              <label for="f-date-scellement-display">Date des travaux de scellement</label>
+              <div class="date-picker-wrap">
+                <input type="text" id="f-date-scellement-display" placeholder="Choisir une date" autocomplete="off" readonly>
+                <input type="hidden" id="f-date-scellement">
+                <div class="date-picker-popup hidden" id="date-picker-popup">
+                  <div class="dp-header">
+                    <button type="button" class="dp-nav" id="dp-prev" aria-label="Mois précédent">‹</button>
+                    <span id="dp-month-label"></span>
+                    <button type="button" class="dp-nav" id="dp-next" aria-label="Mois suivant">›</button>
+                  </div>
+                  <div class="dp-dow">
+                    <span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span>
+                  </div>
+                  <div class="dp-grid" id="dp-grid"></div>
+                </div>
+              </div>
               <span class="hint">Utilisée aussi comme date de la lettre.</span>
             </div>
           </div>
@@ -460,6 +500,17 @@
 
   function el(id){ return document.getElementById(id); }
 
+  var MOIS_COURT = ["Jan","Fév","Mar","Avr","Mai","Juin","Juil","Août","Sep","Oct","Nov","Déc"];
+
+  function setDateScellement(iso){
+    var hidden = el("f-date-scellement");
+    var display = el("f-date-scellement-display");
+    hidden.value = iso || "";
+    display.value = iso ? formatDateFr(iso) : "";
+    hidden.dispatchEvent(new Event("input", {bubbles:true}));
+    hidden.dispatchEvent(new Event("change", {bubbles:true}));
+  }
+
   function escapeXml(s){
     return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   }
@@ -512,7 +563,7 @@
     el("f-nref").value = data.nref || "";
     el("f-entreprise").value = data.entreprise || "";
     el("f-ville-entreprise").value = data.villeEntreprise || "";
-    el("f-date-scellement").value = data.dateScellement || "";
+    setDateScellement(data.dateScellement || "");
     renderPreview();
   }
 
@@ -680,6 +731,86 @@
   function toggleDest2(force){
     var on = force!==undefined ? force : el("f-dest2-toggle").checked;
     el("wrap-dest2").classList.toggle("hidden", !on);
+  }
+
+  // ---------- calendrier (remplace le <input type="date"> natif pour pouvoir
+  // ouvrir la bulle vers le haut et éviter qu'elle soit coupée en bas de page) ----------
+
+  var dpView = null; // {year, month} du mois affiché (month: 0-11)
+
+  function pad2(n){ return String(n).padStart(2, "0"); }
+  function isoFromParts(y, m, d){ return y + "-" + pad2(m+1) + "-" + pad2(d); }
+
+  function isDatePickerOpen(){ return !el("date-picker-popup").classList.contains("hidden"); }
+
+  function openDatePicker(){
+    var current = el("f-date-scellement").value;
+    var base = current ? current.split("-").map(Number) : null;
+    var today = new Date();
+    dpView = base
+      ? {year: base[0], month: base[1]-1}
+      : {year: today.getFullYear(), month: today.getMonth()};
+    renderDatePicker();
+    el("date-picker-popup").classList.remove("hidden");
+  }
+
+  function closeDatePicker(){
+    el("date-picker-popup").classList.add("hidden");
+  }
+
+  function renderDatePicker(){
+    var y = dpView.year, m = dpView.month;
+    el("dp-month-label").textContent = MOIS_COURT[m] + " " + y;
+
+    var selectedIso = el("f-date-scellement").value;
+    var todayIsoVal = todayIso();
+
+    var firstOfMonth = new Date(y, m, 1);
+    // lundi = 0 ... dimanche = 6
+    var startOffset = (firstOfMonth.getDay() + 6) % 7;
+    var daysInMonth = new Date(y, m+1, 0).getDate();
+    var daysInPrevMonth = new Date(y, m, 0).getDate();
+
+    var cells = [];
+    for(var i=0; i<startOffset; i++){
+      var pd = daysInPrevMonth - startOffset + 1 + i;
+      cells.push({day: pd, muted:true});
+    }
+    for(var d=1; d<=daysInMonth; d++){
+      cells.push({day:d, muted:false, iso: isoFromParts(y, m, d)});
+    }
+    while(cells.length % 7 !== 0 || cells.length < 42){
+      var nd = cells.length - (startOffset + daysInMonth) + 1;
+      cells.push({day: nd, muted:true});
+      if(cells.length >= 42) break;
+    }
+
+    var html = "";
+    cells.forEach(function(c){
+      var cls = "dp-day";
+      if(c.muted){ cls += " muted"; }
+      if(!c.muted && c.iso === todayIsoVal){ cls += " today"; }
+      if(!c.muted && c.iso === selectedIso){ cls += " selected"; }
+      var attr = c.muted ? "disabled" : "data-iso=\"" + c.iso + "\"";
+      html += "<button type=\"button\" class=\"" + cls + "\" " + attr + ">" + c.day + "</button>";
+    });
+    el("dp-grid").innerHTML = html;
+
+    el("dp-grid").querySelectorAll(".dp-day:not(.muted)").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        setDateScellement(btn.getAttribute("data-iso"));
+        closeDatePicker();
+      });
+    });
+  }
+
+  function shiftDatePickerMonth(delta){
+    var m = dpView.month + delta;
+    var y = dpView.year;
+    while(m < 0){ m += 12; y--; }
+    while(m > 11){ m -= 12; y++; }
+    dpView = {year:y, month:m};
+    renderDatePicker();
   }
 
   function showStatus(kind, msg){
@@ -937,6 +1068,18 @@
       el("preview-panel").classList.remove("hidden");
       renderPreview();
       setTimeout(function(){ window.print(); }, 60);
+    });
+
+    el("f-date-scellement-display").addEventListener("click", function(){
+      if(isDatePickerOpen()){ closeDatePicker(); } else { openDatePicker(); }
+    });
+    el("dp-prev").addEventListener("click", function(){ shiftDatePickerMonth(-1); });
+    el("dp-next").addEventListener("click", function(){ shiftDatePickerMonth(1); });
+    document.addEventListener("click", function(e){
+      if(isDatePickerOpen() && !e.target.closest(".date-picker-wrap")){ closeDatePicker(); }
+    });
+    document.addEventListener("keydown", function(e){
+      if(e.key === "Escape" && isDatePickerOpen()){ closeDatePicker(); }
     });
 
     el("tab-nouvelle").addEventListener("click", function(){ selectTab("nouvelle"); });
