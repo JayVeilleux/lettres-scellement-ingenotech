@@ -11,7 +11,6 @@
 <meta name="theme-color" content="#0E86D4">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <script src="./jszip.min.js"></script>
-<script src="./html2canvas.min.js"></script>
 <script src="./jspdf.umd.min.js"></script>
 <style>
   :root{
@@ -444,8 +443,6 @@
     </div>
   </div>
 
-  <div class="letter-sheet" id="pdf-sheet" aria-hidden="true" style="position:fixed; left:-10000px; top:0; width:794px; margin:0;"></div>
-
   <div id="panel-historique" class="hidden">
     <div class="card">
       <h2>Lettres générées</h2>
@@ -853,6 +850,245 @@
     }
   }
 
+  // ---------- generation du PDF : texte vectoriel natif (pas une capture d'ecran) ----------
+  //
+  // Le premier essai (capture html2canvas du rendu HTML, comme une "photo" de la lettre
+  // encapsulee dans un PDF) produisait un rendu casse : texte coupe sur la droite et
+  // espacement entre les mots totalement disproportionne. Cause reelle : html2canvas ne
+  // reproduit pas fidelement le "text-align: justify" du CSS, qui est utilise partout dans
+  // la lettre - il recalcule sa propre justification et deborde du cadre. Plutot que de
+  // corriger ce symptome (ex. desactiver le justify juste pour le PDF), la lettre est
+  // maintenant dessinee directement en texte vectoriel avec jsPDF : justification correcte,
+  // gras/italique/soulignement, texte selectionnable/copiable dans le PDF (contrairement a
+  // l'ancienne version), fichier beaucoup plus leger, et plus aucun risque de depassement de
+  // page. Le contenu vient de buildLetterHtml()/letterBodyHtml() (la meme source que
+  // l'apercu a l'ecran - voir la "lecon retenue" plus haut) : parseLetterBlocks() en extrait
+  // la structure (lignes, paragraphes, listes, passages en italique) pour la redessiner.
+
+  function decodeHtmlEntitiesForPdf(s){
+    return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+            // Apostrophe typographique (’) -> apostrophe droite : bug jsPDF constate le
+            // 2026-09-15 - avec la police standard "helvetica", un mot contenant ’ peut se
+            // redessiner plus large que mesure apres plusieurs appels de mesure de texte et
+            // ecraser l'espace suivant (ex. "L’aménagement du" devenait "L’aménagementdu").
+            // L'apostrophe droite n'a pas ce probleme ; elle reste lisible et professionnelle.
+            .replace(/’/g, "'");
+  }
+
+  function parseRunsForPdf(fragment){
+    var runs = [];
+    var re = /<i>([\s\S]*?)<\/i>/g;
+    var last = 0, m;
+    while((m = re.exec(fragment))){
+      if(m.index > last) runs.push({t: decodeHtmlEntitiesForPdf(fragment.slice(last, m.index)), italic:false});
+      runs.push({t: decodeHtmlEntitiesForPdf(m[1]), italic:true});
+      last = re.lastIndex;
+    }
+    if(last < fragment.length) runs.push({t: decodeHtmlEntitiesForPdf(fragment.slice(last)), italic:false});
+    return runs.filter(function(r){ return r.t.length > 0; });
+  }
+
+  function parseLetterBlocksForPdf(html){
+    var blocks = {};
+
+    var ldMatch = /<div class="ld">([\s\S]*?)<\/div>/.exec(html);
+    blocks.dateLine = ldMatch ? decodeHtmlEntitiesForPdf(ldMatch[1]) : "";
+
+    var destMatch = /<div class="dest">([\s\S]*?)<\/div>/.exec(html);
+    blocks.destLines = destMatch
+      ? destMatch[1].split(/<br>/).map(function(s){ return decodeHtmlEntitiesForPdf(s); }).filter(function(s){ return s.length > 0; })
+      : [];
+
+    var objMatch = /<div class="obj">([\s\S]*?)<\/div>/.exec(html);
+    var objRaw = objMatch ? objMatch[1] : "";
+    var objLines = objRaw.split(/<br>/);
+    var titleLine = objLines[0] || "";
+    var titleMatch = /<u>([\s\S]*?)<\/u>/.exec(titleLine);
+    blocks.objTitle = titleMatch ? decodeHtmlEntitiesForPdf(titleMatch[1]) : "";
+    blocks.objLot = objLines[1] ? decodeHtmlEntitiesForPdf(objLines[1]) : "";
+    blocks.objNref = objLines[2] ? decodeHtmlEntitiesForPdf(objLines[2]) : "";
+
+    var objDivIdx = html.indexOf('class="obj"');
+    var bodyStart = html.indexOf("</div>", objDivIdx) + 6;
+    var sigIdx = html.indexOf('<div class="sig"');
+    var bodyHtml = html.slice(bodyStart, sigIdx === -1 ? html.length : sigIdx);
+
+    var bodyBlocks = [];
+    var tagRe = /<p>([\s\S]*?)<\/p>|<ul>([\s\S]*?)<\/ul>|<ol>([\s\S]*?)<\/ol>/g;
+    var tm;
+    while((tm = tagRe.exec(bodyHtml))){
+      if(tm[1] !== undefined){
+        bodyBlocks.push({type:"p", runs: parseRunsForPdf(tm[1])});
+      } else if(tm[2] !== undefined){
+        var items = tm[2].match(/<li>([\s\S]*?)<\/li>/g) || [];
+        bodyBlocks.push({type:"ul", items: items.map(function(li){
+          return parseRunsForPdf(li.replace(/^<li>/, "").replace(/<\/li>$/, ""));
+        })});
+      } else if(tm[3] !== undefined){
+        var oitems = tm[3].match(/<li>([\s\S]*?)<\/li>/g) || [];
+        bodyBlocks.push({type:"ol", items: oitems.map(function(li){
+          return parseRunsForPdf(li.replace(/^<li>/, "").replace(/<\/li>$/, ""));
+        })});
+      }
+    }
+    blocks.body = bodyBlocks;
+    return blocks;
+  }
+
+  function mergePdfOpts(base, extra){
+    var o = {};
+    for(var k in base) o[k] = base[k];
+    for(var k2 in extra) o[k2] = extra[k2];
+    return o;
+  }
+
+  function pdfFontStyleFor(w){
+    if(w.bold && w.italic) return "bolditalic";
+    if(w.bold) return "bold";
+    if(w.italic) return "italic";
+    return "normal";
+  }
+
+  // Decoupe des "runs" (segments de texte avec gras/italique/souligne) en mots, les
+  // repartit en lignes selon maxWidth, puis les dessine - justifiees (espaces entre mots
+  // etires pour remplir la largeur, sauf la derniere ligne du paragraphe) ou alignees a
+  // gauche. Gere aussi le saut de page automatique si le contenu depasse le bas de la page.
+  function layoutPdfRuns(pdf, runs, x0, y0, maxWidth, opts){
+    var size = opts.size;
+    pdf.setFontSize(size);
+
+    var words = [];
+    runs.forEach(function(run){
+      var parts = String(run.t == null ? "" : run.t).split(/\s+/).filter(Boolean);
+      parts.forEach(function(p){
+        words.push({text:p, bold:!!run.bold, italic:!!run.italic, underline:!!run.underline});
+      });
+    });
+
+    words.forEach(function(w){
+      pdf.setFont("helvetica", pdfFontStyleFor(w));
+      w.width = pdf.getTextWidth(w.text);
+    });
+    pdf.setFont("helvetica", "normal");
+    var spaceW = pdf.getTextWidth(" ");
+
+    var lines = [];
+    var cur = [], curW = 0;
+    words.forEach(function(w){
+      var add = (cur.length ? spaceW : 0) + w.width;
+      if(cur.length && curW + add > maxWidth){
+        lines.push(cur);
+        cur = [w];
+        curW = w.width;
+      } else {
+        cur.push(w);
+        curW += add;
+      }
+    });
+    if(cur.length) lines.push(cur);
+    if(!lines.length) return y0;
+
+    var y = y0;
+    lines.forEach(function(line, idx){
+      if(y + opts.lineHeight > opts.pageBottom){
+        pdf.addPage();
+        y = opts.pageTopAfterBreak;
+      }
+      var isLast = idx === lines.length - 1;
+      var totalW = line.reduce(function(s, w){ return s + w.width; }, 0);
+      var gaps = line.length - 1;
+      var gapW = spaceW;
+      if(opts.align === "justify" && !isLast && gaps > 0){
+        var avail = maxWidth - totalW;
+        var computed = avail / gaps;
+        gapW = (computed >= 0 && computed <= spaceW * 3) ? computed : spaceW;
+      }
+      var x = x0;
+      var underlineStart = null, underlineEnd = null;
+      line.forEach(function(w, wi){
+        pdf.setFont("helvetica", pdfFontStyleFor(w));
+        pdf.text(w.text, x, y);
+        if(w.underline){
+          if(underlineStart === null) underlineStart = x;
+          underlineEnd = x + w.width;
+        }
+        x += w.width + (wi < line.length - 1 ? gapW : 0);
+      });
+      if(underlineStart !== null){
+        pdf.setDrawColor(0);
+        pdf.setLineWidth(0.15);
+        pdf.line(underlineStart, y + 0.8, underlineEnd, y + 0.8);
+      }
+      y += opts.lineHeight;
+    });
+    return y;
+  }
+
+  function drawLetterPdf(pdf, f, c){
+    var html = buildLetterHtml(f, c, true);
+    var parsed = parseLetterBlocksForPdf(html);
+
+    var PAGE_W = 210, PAGE_H = 297;
+    var M_LEFT = 25.4, M_RIGHT = 25.4, M_BOTTOM = 25.4;
+    var BODY_START_Y = 34, CONT_TOP = 20;
+    var CONTENT_W = PAGE_W - M_LEFT - M_RIGHT;
+    var pageBottom = PAGE_H - M_BOTTOM;
+    var size = 10, lineHeight = 4.3, paraGap = 2.6, listItemGap = 1.4;
+    var baseOpts = {size:size, lineHeight:lineHeight, pageBottom:pageBottom, pageTopAfterBreak:CONT_TOP};
+
+    // logo (haut de la 1re page, aligne a droite - dimensions reprises du gabarit Word original)
+    var LOGO_W = 55, LOGO_H = LOGO_W * 616/891;
+    pdf.addImage(LOGO_DATA_URI, "PNG", PAGE_W - M_RIGHT - LOGO_W, 8, LOGO_W, LOGO_H);
+
+    var y = BODY_START_Y;
+
+    y = layoutPdfRuns(pdf, [{t:parsed.dateLine}], M_LEFT, y, CONTENT_W, mergePdfOpts(baseOpts, {align:"left"}));
+    y += paraGap;
+
+    parsed.destLines.forEach(function(line){
+      y = layoutPdfRuns(pdf, [{t:line}], M_LEFT, y, CONTENT_W, mergePdfOpts(baseOpts, {align:"left"}));
+    });
+    y += paraGap;
+
+    y = layoutPdfRuns(pdf, [{t:"Objet : ", bold:true}, {t:parsed.objTitle, underline:true}], M_LEFT, y, CONTENT_W, mergePdfOpts(baseOpts, {align:"left"}));
+    y = layoutPdfRuns(pdf, [{t:parsed.objLot}], M_LEFT, y, CONTENT_W, mergePdfOpts(baseOpts, {align:"left"}));
+    y = layoutPdfRuns(pdf, [{t:parsed.objNref}], M_LEFT, y, CONTENT_W, mergePdfOpts(baseOpts, {align:"left"}));
+    y += paraGap;
+
+    parsed.body.forEach(function(block){
+      if(block.type === "p"){
+        y = layoutPdfRuns(pdf, block.runs, M_LEFT, y, CONTENT_W, mergePdfOpts(baseOpts, {align:"justify"}));
+        y += paraGap;
+      } else if(block.type === "ul" || block.type === "ol"){
+        var indent = 6;
+        block.items.forEach(function(item, idx){
+          var marker = block.type === "ul" ? "•" : (idx + 1) + ".";
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(size);
+          if(y + lineHeight > pageBottom){ pdf.addPage(); y = CONT_TOP; }
+          pdf.text(marker, M_LEFT, y);
+          y = layoutPdfRuns(pdf, item, M_LEFT + indent, y, CONTENT_W - indent, mergePdfOpts(baseOpts, {align:"justify"}));
+          y += listItemGap;
+        });
+        y += paraGap - listItemGap;
+      }
+    });
+
+    var sigBlockHeight = 40;
+    if(y + sigBlockHeight > pageBottom){ pdf.addPage(); y = CONT_TOP; }
+    var SIG_W = 48, SIG_H = SIG_W * 318/560;
+    pdf.addImage(SIGNATURE_DATA_URI, "PNG", M_LEFT, y, SIG_W, SIG_H);
+    y += SIG_H - 2;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(size);
+    pdf.text("Marc Raby, T.P.", M_LEFT, y);
+    y += lineHeight;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(size - 1);
+    pdf.text("Membre OTPQ : 2821", M_LEFT, y);
+  }
+
   async function savePdf(){
     var f = readForm();
     clearStatus();
@@ -864,27 +1100,9 @@
     var origText = btn.textContent;
     btn.textContent = "Génération…";
     try{
-      var sheet = el("pdf-sheet");
-      sheet.innerHTML = buildLetterHtml(f, c, true);
-      // largeur fixe = ~210mm (A4) a 96dpi, pour que la mise en page corresponde
-      // a une vraie page imprimee plutot qu'au panneau d'apercu etroit de l'ecran.
-      var canvas = await html2canvas(sheet, {scale:1.5, backgroundColor:"#ffffff", useCORS:true, width:794, windowWidth:794});
-      var imgData = canvas.toDataURL("image/jpeg", 0.92);
       var JsPdfCtor = window.jspdf.jsPDF;
       var pdf = new JsPdfCtor({unit:"mm", format:"a4", compress:true});
-      var pageWidth = 210, pageHeight = 297;
-      var imgWidth = pageWidth;
-      var imgHeight = canvas.height * imgWidth / canvas.width;
-      var heightLeft = imgHeight;
-      var position = 0;
-      pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      while(heightLeft > 0){
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-      }
+      drawLetterPdf(pdf, f, c);
       var blob = pdf.output("blob");
       var fname = "Lettre scellement - " + sanitizeFilenamePart(f.nom1) + " - " + sanitizeFilenamePart(f.nref || f.lot) + ".pdf";
       saveBlobAsFile(blob, fname);
@@ -894,7 +1112,6 @@
     } finally {
       btn.disabled = false;
       btn.textContent = origText;
-      sheet.innerHTML = "";
     }
   }
 
