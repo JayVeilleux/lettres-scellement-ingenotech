@@ -185,6 +185,11 @@
   .toggle-row input{ accent-color:var(--accent); width:16px; height:16px; }
   .toggle-row label{ font-size:.85rem; font-weight:500; }
 
+  #wrap-dest2{ transition:opacity .15s ease; }
+  #wrap-dest2.dest2-off{ opacity:.4; }
+  #wrap-dest2.dest2-off .field label{ color:var(--ink-soft); }
+  .field select:disabled, .field input:disabled{ background:var(--surface-2); color:var(--ink-soft); cursor:not-allowed; }
+
   .link-btn{
     background:none; border:0; color:var(--accent-deep); font-family:inherit; font-size:.78rem;
     font-weight:600; cursor:pointer; padding:0; text-decoration:underline; text-underline-offset:2px;
@@ -325,7 +330,7 @@
             <label for="f-dest2-toggle">Ajouter un deuxième destinataire (ex. couple)</label>
           </div>
 
-          <div class="row cols-civnom hidden" id="wrap-dest2">
+          <div class="row cols-civnom dest2-off" id="wrap-dest2">
             <div class="field">
               <label for="f-civ2">Civilité</label>
               <select id="f-civ2">
@@ -727,7 +732,9 @@
 
   function toggleDest2(force){
     var on = force!==undefined ? force : el("f-dest2-toggle").checked;
-    el("wrap-dest2").classList.toggle("hidden", !on);
+    el("wrap-dest2").classList.toggle("dest2-off", !on);
+    el("f-civ2").disabled = !on;
+    el("f-nom2").disabled = !on;
   }
 
   // ---------- calendrier (remplace le <input type="date"> natif pour pouvoir
