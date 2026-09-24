@@ -1107,9 +1107,20 @@
     });
     y += paraGap;
 
-    y = layoutPdfRuns(pdf, [{t:"Objet : ", bold:true}, {t:parsed.objTitle, underline:true}], M_LEFT, y, CONTENT_W, mergePdfOpts(baseOpts, {align:"left"}));
+    // Retrait "en drapeau" du bloc Objet, repris du gabarit Word (word/document.xml) :
+    // le titre a un retrait suspendu de 993 twips (~17.51mm, avec taquet de tabulation a la
+    // meme position) et les lignes suivantes (Lot, N/ref, Entreprise, Client) ont un simple
+    // retrait a gauche de 1020 twips (~17.99mm) - deux valeurs legerement differentes dans le
+    // gabarit original, reprises telles quelles pour une correspondance exacte avec Word.
+    var OBJ_HANG_MM = 993 / 1440 * 25.4;
+    var OBJ_EXTRA_MM = 1020 / 1440 * 25.4;
+    if(y + baseOpts.lineHeight > baseOpts.pageBottom){ pdf.addPage(); y = baseOpts.pageTopAfterBreak; }
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(size);
+    pdf.text("Objet :", M_LEFT, y);
+    y = layoutPdfRuns(pdf, [{t:parsed.objTitle, bold:true, underline:true}], M_LEFT + OBJ_HANG_MM, y, CONTENT_W - OBJ_HANG_MM, mergePdfOpts(baseOpts, {align:"left"}));
     parsed.objExtraLines.forEach(function(line){
-      y = layoutPdfRuns(pdf, [{t:line}], M_LEFT, y, CONTENT_W, mergePdfOpts(baseOpts, {align:"left"}));
+      y = layoutPdfRuns(pdf, [{t:line}], M_LEFT + OBJ_EXTRA_MM, y, CONTENT_W - OBJ_EXTRA_MM, mergePdfOpts(baseOpts, {align:"left"}));
     });
     y += paraGap;
 
