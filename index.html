@@ -195,7 +195,11 @@
     font-weight:600; cursor:pointer; padding:0; text-decoration:underline; text-underline-offset:2px;
   }
 
-  .actions-card{ position:sticky; top:16px; }
+  .bar{ position:sticky; bottom:0; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:14px 16px; box-shadow:var(--shadow); margin-top:16px; display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; justify-content:space-between; }
+  .bar .actions{ display:flex; flex-wrap:wrap; gap:8px; }
+  .bar .btn{ width:auto; }
+  .bar .status-msg{ margin:0; flex:1 1 auto; min-width:160px; }
+  .bar .meta-line{ border-top:0; padding:0; width:auto; }
   .btn{
     font-family:inherit; font-size:.9rem; font-weight:600; border-radius:9px; padding:11px 16px;
     border:1px solid transparent; cursor:pointer; width:100%; display:flex; align-items:center; justify-content:center; gap:8px;
@@ -215,7 +219,7 @@
   .meta-line:first-of-type{ border-top:0; padding-top:0; }
   .meta-line b{ color:var(--ink); font-weight:600; font-family:"IBM Plex Mono", monospace; font-size:.76rem; }
 
-  #preview-panel{ margin-top:16px; }
+  #preview-panel{ margin-top:16px; position:sticky; top:16px; }
   #preview-panel.hidden{ display:none; }
   .letter-sheet{
     background:#fff; color:#1a1a1a; border-radius:6px; border:1px solid var(--line);
@@ -436,26 +440,22 @@
             </div>
           </div>
         </div>
+
+        <div class="bar">
+          <div class="status-msg" id="status-msg"></div>
+          <div class="actions">
+            <button class="btn btn-secondary" id="btn-print">Imprimer</button>
+            <button class="btn btn-secondary" id="btn-save-pdf">Enregistrer en PDF</button>
+            <button class="btn btn-primary" id="btn-generate">Générer la lettre (Word)</button>
+          </div>
+          <div class="meta-line"><span>Signataire</span><b>Marc Raby, T.P.</b></div>
+          <div class="meta-line"><span>Membre OTPQ</span><b>2821</b></div>
+        </div>
       </div>
 
-      <div>
-        <div class="card actions-card">
-          <h2>Générer</h2>
-          <button class="btn btn-primary" id="btn-generate">Générer la lettre (Word)</button>
-          <button class="btn btn-secondary" id="btn-preview">Aperçu de la lettre</button>
-          <button class="btn btn-secondary" id="btn-save-pdf">Enregistrer en PDF</button>
-          <button class="btn btn-secondary" id="btn-print">Imprimer</button>
-          <div class="status-msg" id="status-msg"></div>
-          <div style="margin-top:16px;">
-            <div class="meta-line"><span>Signataire</span><b>Marc Raby, T.P.</b></div>
-            <div class="meta-line"><span>Membre OTPQ</span><b>2821</b></div>
-          </div>
-        </div>
-
-        <div class="card hidden" id="preview-panel">
-          <h2>Aperçu</h2>
-          <div class="letter-sheet" id="preview-content"></div>
-        </div>
+      <div class="card" id="preview-panel">
+        <h2>Aperçu</h2>
+        <div class="letter-sheet" id="preview-content"></div>
       </div>
     </div>
   </div>
@@ -1354,13 +1354,8 @@
     });
 
     el("btn-generate").addEventListener("click", onGenerate);
-    el("btn-preview").addEventListener("click", function(){
-      el("preview-panel").classList.toggle("hidden");
-      renderPreview();
-    });
     el("btn-save-pdf").addEventListener("click", savePdf);
     el("btn-print").addEventListener("click", function(){
-      el("preview-panel").classList.remove("hidden");
       renderPreview();
       setTimeout(function(){ window.print(); }, 60);
     });
