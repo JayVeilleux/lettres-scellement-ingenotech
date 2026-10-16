@@ -250,6 +250,7 @@
   .badge.distance{ background:var(--accent-tint); color:var(--accent-deep); }
   .badge.inondable{ background:var(--success-tint); color:var(--success); }
   .hist-empty{ padding:26px 10px; text-align:center; color:var(--ink-soft); font-size:.86rem; }
+  .hist-empty.hidden{ display:none; }
   .table-wrap{ overflow-x:auto; }
   .hist-note{ font-size:.76rem; color:var(--ink-soft); margin-bottom:12px; }
   .redownload-btn{
@@ -1255,11 +1256,14 @@
       rows += "<td>" + escapeHtml(dest) + "</td>";
       rows += "<td class='mono'>" + escapeHtml(d.lot) + "</td>";
       rows += "<td class='mono'>" + escapeHtml(d.nref) + "</td>";
-      rows += "<td><button class='redownload-btn' data-id='" + d.id + "'>Retélécharger</button></td>";
+      rows += "<td><div style='display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end'>";
+      rows += "<button class='redownload-btn reopen-btn' data-id='" + d.id + "'>Rouvrir</button>";
+      rows += "<button class='redownload-btn' data-id='" + d.id + "'>Retélécharger</button>";
+      rows += "</div></td>";
       rows += "</tr>";
     });
     body.innerHTML = rows;
-    body.querySelectorAll(".redownload-btn").forEach(function(btn){
+    body.querySelectorAll(".redownload-btn:not(.reopen-btn)").forEach(function(btn){
       btn.addEventListener("click", async function(){
         var id = btn.getAttribute("data-id");
         var item = list.find(function(x){ return x.id === id; });
@@ -1270,6 +1274,19 @@
           await regenerateFromHistorique(item);
           btn.disabled = false;
           btn.textContent = orig;
+        }
+      });
+    });
+    body.querySelectorAll(".reopen-btn").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        var id = btn.getAttribute("data-id");
+        var item = list.find(function(x){ return x.id === id; });
+        if(item){
+          el("example-banner").classList.add("hidden");
+          writeForm(item);
+          selectTab("nouvelle");
+          window.scrollTo({top:0, behavior:"smooth"});
+          showStatus("ok", "Lettre rouverte depuis l'historique — vous pouvez la modifier puis régénérer.");
         }
       });
     });
