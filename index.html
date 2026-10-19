@@ -1180,6 +1180,7 @@
       var fname = "Lettre scellement - " + sanitizeFilenamePart(f.nom1) + " - " + sanitizeFilenamePart(f.nref || f.lot) + ".pdf";
       saveBlobAsFile(blob, fname);
       showStatus("ok", "PDF enregistré : " + fname);
+      saveToHistorique(f);
     } catch(err){
       showStatus("error", "Erreur lors de la génération du PDF. Réessayez, ou utilisez Imprimer.");
     } finally {
